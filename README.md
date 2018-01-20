@@ -100,3 +100,22 @@ exception type.
 ## Example usage
 
 For now, just check out the test suite.
+
+## Why not `ExceptT`
+
+I claim that `Trio` has the following advantages over `ExceptT`:
+
+* It's more efficient by avoid the `Either` wrapping and pattern matching
+* By design, it only has one method for exceptions to be reported, as opposed
+  to `ExceptT` allowing exceptions to appear in either the `Left` value or
+  runtime exceptions. This makes it much easier and safer to implement many
+  functions like `concurrently`.
+* Hopefully by documenting it correctly from the start, it can make clear that
+  while this type can capture checked exceptions explicitly, unchecked
+  exceptions are still a reality.
+
+## Why the `ReaderT` bit?
+
+All of the arguments from the `RIO` data type still apply: the common case in
+most applications is having some environment passed around (like config
+values), and we should optimize for that common case.
