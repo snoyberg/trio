@@ -1,6 +1,9 @@
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 module Trio
   ( Trio
@@ -31,15 +34,28 @@ import GHC.Exts (Any)
 import Unsafe.Coerce (unsafeCoerce)
 import qualified Data.ByteString as B
 import qualified System.IO as IO
+import Control.Applicative (liftA2)
 
-newtype Trio r e a = Trio (ReaderT r IO a)
-  deriving (Functor, Applicative, Monad)
+data Trio r e a = Trio (forall k. r -> (a -> IO k) -> IO k)
+deriving instance Functor (Trio r e)
+instance Applicative (Trio r e) where
+  pure a = Trio (\_r f -> f a)
+  Trio f <*> Trio a = Trio $ \r h -> f r $ \f' -> a r $ \a' -> h (f' a')
+  liftA2 f (Trio x) (Trio y) = Trio $ \r h -> x r $ \x' -> y r $ \y' -> h (f x' y')
+  Trio x *> Trio y = Trio $ \r h -> x r $ \_x -> y r h
+instance Monad (Trio r e) where
+  return = pure
+  (>>) = (*>)
+  Trio f >>= g =
+    Trio $ \r h -> f r $ \x ->
+      let Trio g' = g x
+       in g' r h
 
 unTrio :: Trio r e a -> r -> IO a
-unTrio (Trio (ReaderT f)) = f
+unTrio (Trio f) r = f r pure
 
 mkTrio :: (r -> IO a) -> Trio r e a
-mkTrio = Trio . ReaderT
+mkTrio f = Trio $ \r g -> f r >>= g
 
 data Checked = Checked Any
   deriving Typeable
@@ -75,8 +91,8 @@ throwUnchecked e = mkTrio $ \_ -> E.throwIO e
 catch :: Trio r e1 a -> (e1 -> Trio r e2 a) -> Trio r e2 a
 catch t onErr = mkTrio $ \r ->
   unTrio t r `E.catch` \(Checked e) ->
-    let Trio (ReaderT g) = onErr (unsafeCoerce e)
-     in g r
+    let g = onErr (unsafeCoerce e)
+     in unTrio g r
 
 -- | Return a checked exception as an 'Either' value
 try :: Trio r e a -> Trio r void (Either e a)
