@@ -23,13 +23,16 @@ module Trio
   , openBinaryFile
   , hClose
   , FromIOException (..)
+  , scoped
+  , allocate
+  , ask
+  , binaryFile
   ) where
 
 import Data.Void
 import Data.Typeable
 import qualified Control.Exception as E
 import Control.Monad.IO.Class
-import Control.Monad.Trans.Reader
 import GHC.Exts (Any)
 import Unsafe.Coerce (unsafeCoerce)
 import qualified Data.ByteString as B
@@ -174,3 +177,27 @@ withBinaryFile fp mode inner = bracket
   (openBinaryFile fp mode)
   hClose
   inner
+
+ask :: Trio r e r
+ask = Trio $ \r f -> f r
+
+scoped :: Trio r e a -> Trio r e a
+scoped (Trio f) = Trio $ \r k -> do
+  a <- f r pure
+  k a
+
+allocate
+  :: Trio r e a -- ^ allocate
+  -> (a -> Trio r e ()) -- ^ cleanup
+  -> Trio r e a
+allocate alloc clean = Trio $ \r k -> E.bracket
+  (unTrio alloc r)
+  (\a -> unTrio (clean a) r)
+  (\a -> k a)
+
+binaryFile
+  :: FromIOException e
+  => FilePath
+  -> IO.IOMode
+  -> Trio r e IO.Handle
+binaryFile fp mode = allocate (openBinaryFile fp mode) hClose
